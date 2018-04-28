@@ -10,14 +10,12 @@ using System.Collections.Concurrent;
 
 namespace Shark
 {
-    public delegate string RequestHandler();
-    public delegate string ErrorHandler(Uri requestUri);
+    public delegate Response ErrorHandler(Uri requestUri);
     public delegate string FastPathCall(object[] args);
 
     public class Server
     {
-        private readonly int NumThreads = 8;
-//#error Need to have list of methodinfo, in case multiple handlers exist for the same route
+        private readonly int DefaultThreads = 8;
         private Dictionary<string, MethodInfo> mGetMethods;
         private Dictionary<string, MethodInfo> mPostMethods;
         private Dictionary<string, MethodInfo> mPutMethods;
@@ -36,7 +34,6 @@ namespace Shark
             mPatchMethods = new Dictionary<string, MethodInfo>();
             mDeleteMethods = new Dictionary<string, MethodInfo>();
 
-            m404Handler = Default404Handler;
             mWorkQueue = new BlockingCollection<HttpListenerContext>();
         }
 
@@ -51,17 +48,18 @@ namespace Shark
 
             mTarget = Activator.CreateInstance<T>();
 
-            CancellationTokenSource tokenSource = new CancellationTokenSource();
-
-            for (int i = 0; i < NumThreads; ++i)
+            int numThreads = options?.WorkerThreadCount ?? DefaultThreads;
+            for (int i = 0; i < DefaultThreads; ++i)
             {
                 Thread temp = new Thread(WorkerThread);
-                temp.Start(tokenSource.Token);
+                temp.Start(options.CancellationToken);
             }
 
             string listenUrl = options?.Url ?? "http://localhost:3500/";
             HttpListener listener = new HttpListener();
             listener.Prefixes.Add(listenUrl);
+
+            m404Handler = options?.Handler ?? Default404Handler;
 
             Console.WriteLine($"Starting listening at {listenUrl}");
 
@@ -69,7 +67,7 @@ namespace Shark
 
             while (listener.IsListening)
             {
-                if ((options?.CancellationToken.IsCancellationRequested) == true)
+                if ((options?.CancellationToken?.IsCancellationRequested) == true)
                 {
                     listener.Stop();
                     break;
@@ -82,11 +80,20 @@ namespace Shark
 
         private void WorkerThread(object tokenObj)
         {
-            CancellationToken token = (CancellationToken)tokenObj;
+            CancellationToken? token = (CancellationToken?)tokenObj;
             while (true)
             {
-                HttpListenerContext context = mWorkQueue.Take(token);
-                if (token.IsCancellationRequested)
+                HttpListenerContext context;
+                if (token.HasValue)
+                {
+                    context = mWorkQueue.Take(token.Value);
+                }
+                else
+                {
+                    context = mWorkQueue.Take();
+                }
+
+                if (token?.IsCancellationRequested == true)
                 {
                     return;
                 }
@@ -323,7 +330,7 @@ namespace Shark
             return route.Equals(candidate, StringComparison.OrdinalIgnoreCase);
         }
 
-        private string Default404Handler(Uri requestUrl)
+        private Response Default404Handler(Uri requestUrl)
         {
             return $"<b>{requestUrl.PathAndQuery}: 404 not found</b>";
         }
