@@ -1,4 +1,6 @@
 ﻿using System;
+using System.Collections.Specialized;
+using System.Text;
 using Shark;
 
 namespace SharkConsole
@@ -15,6 +17,18 @@ namespace SharkConsole
         public string ArgumentTest(int count, string name)
         {
             return $"ArgumentTest: count:{count} name:{name}";
+        }
+
+        [Get("/namevalue")]
+        public string NameValueTest(NameValueCollection query)
+        {
+            StringBuilder builder = new StringBuilder();
+            foreach (string key in query.AllKeys)
+            {
+                builder.AppendLine($"{key}:{query[key]}");
+            }
+
+            return builder.ToString();
         }
     }
 }

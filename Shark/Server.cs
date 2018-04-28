@@ -8,7 +8,6 @@ using System.Reflection;
 
 namespace Shark
 {
-    // TODO: requests should have arguments?
     public delegate string RequestHandler();
     public delegate string ErrorHandler(Uri requestUri);
 
@@ -20,6 +19,7 @@ namespace Shark
 
         public Server()
         {
+//#error Do Tests!
             mRouteMap = new Dictionary<string, MethodInfo>();
             m404Handler = Default404Handler;
         }
@@ -40,6 +40,7 @@ namespace Shark
             listener.Prefixes.Add(listenUrl);
 
             Console.WriteLine($"Starting listening at {listenUrl}");
+
             listener.Start();
 
             while (listener.IsListening)
@@ -98,7 +99,8 @@ namespace Shark
 
         private bool MakeArgs(NameValueCollection query, ParameterInfo[] parameters, int paramCount, object[] realArgs)
         {
-            if (realArgs.Length != query.AllKeys.Length)
+            bool allArgs = parameters.Length == 1 && parameters[0].ParameterType == typeof(NameValueCollection);
+            if (!allArgs && parameters.Length != query.AllKeys.Length)
             {
                 return false;
             }
@@ -110,8 +112,13 @@ namespace Shark
                 Type paramType = param.ParameterType;
                 string name = param.Name;
 
-                string value;
-                if (query.AllKeys.Contains(name, StringComparer.OrdinalIgnoreCase))
+                string value = null;
+                if (paramType == typeof(NameValueCollection))
+                {
+                    realArgs[i] = query;
+                    continue;
+                }
+                else if (query.AllKeys.Contains(name, StringComparer.OrdinalIgnoreCase))
                 {
                     value = query[name];
                 }
@@ -224,6 +231,7 @@ namespace Shark
 
         private bool RouteMatches(string route, string candidate)
         {
+            // TODO: wildcards
             return route.Equals(candidate, StringComparison.OrdinalIgnoreCase);
         }
 
@@ -239,11 +247,19 @@ namespace Shark
                 IEnumerable<GetAttribute> getAttributes = info.GetCustomAttributes<GetAttribute>();
                 if (getAttributes.Count() > 0)
                 {
-                    foreach (ParameterInfo param in info.GetParameters())
+                    ParameterInfo[] parameters = info.GetParameters();
+                    foreach (ParameterInfo param in parameters)
                     {
-                        if (!IsSupportedType(param.ParameterType))
+                        if (param.ParameterType == typeof(NameValueCollection))
                         {
-                            throw new ArgumentException($"Unsupported type {param.ParameterType} as argument to method.");
+                            if (parameters.Length != 1)
+                            {
+                                throw new ArgumentException($"NameValueCollection arguments must be the only argument for method {info.Name}");
+                            }
+                        }
+                        else if (!IsSupportedType(param.ParameterType))
+                        {
+                            throw new ArgumentException($"Unsupported type {param.ParameterType} as argument to method for method {info.Name}");
                         }
                     }
                 }
