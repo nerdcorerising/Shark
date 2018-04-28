@@ -46,9 +46,6 @@ namespace Shark
             {
                 HttpListenerContext context = listener.GetContext();
 
-                // TODO: Url.LocalPath is what you want for routes I think
-                // TODO: Request.HttpMethod is the method
-                // TODO: There's also query stuff?
                 Console.WriteLine($"Incoming request Method={context.Request.HttpMethod} LocalPath={context.Request.Url.LocalPath} RawUrl={context.Request.RawUrl}");
 
                 Uri requestUrl = context.Request.Url;
@@ -56,13 +53,9 @@ namespace Shark
 
                 MethodInfo handler = FindRequestHandlerForRoute(route);
                 string response;
-                if (handler == null)
+                if (handler == null || !CallMethodHandler(handler, context.Request, out response))
                 {
                     response = m404Handler(requestUrl);
-                }
-                else
-                {
-                    response = CallMethodHandler(handler, context.Request);
                 }
 
                 using (StreamWriter output = new StreamWriter(context.Response.OutputStream))
@@ -72,12 +65,8 @@ namespace Shark
             }
         }
 
-        private string CallMethodHandler(MethodInfo handler, HttpListenerRequest request)
+        private bool CallMethodHandler(MethodInfo handler, HttpListenerRequest request, out string response)
         {
-            // TODO: what should I do when the arguments don't match? I.e. when you say
-            // you want an int and it doesn't parse or is missing
-            // Maybe I should error, or maybe just do a default value
-
             if (handler.ReturnType != typeof(string))
             {
                 throw new ArgumentException("Method to invoke doesn't return string.");
@@ -88,7 +77,33 @@ namespace Shark
             ParameterInfo[] parameters = handler.GetParameters();
             int paramCount = parameters.Length;
             object[] realArgs = new object[paramCount];
+            if (!MakeArgs(query, parameters, paramCount, realArgs))
+            {
+                response = String.Empty;
+                return false;
+            }
 
+            try
+            {
+                response = (string)handler.Invoke(mTarget, realArgs);
+            }
+            catch (Exception)
+            {
+                response = String.Empty;
+                return false;
+            }
+
+            return true;
+        }
+
+        private bool MakeArgs(NameValueCollection query, ParameterInfo[] parameters, int paramCount, object[] realArgs)
+        {
+            if (realArgs.Length != query.AllKeys.Length)
+            {
+                return false;
+            }
+
+            bool success = true;
             for (int i = 0; i < paramCount; ++i)
             {
                 ParameterInfo param = parameters[i];
@@ -102,31 +117,35 @@ namespace Shark
                 }
                 else
                 {
-                    value = null;
+                    return false;
                 }
 
-                object arg = MakeArgument(value, paramType);
+                object arg = null;
+                success &= MakeArgument(value, paramType, out arg);
                 realArgs[i] = arg;
             }
 
-            string retString = (string)handler.Invoke(mTarget, realArgs);
-            return retString;
+            return success;
         }
 
-        private object MakeArgument(string value, Type paramType)
+        private bool MakeArgument(string value, Type paramType, out object arg)
         {
             if (paramType == typeof(string))
             {
-                return value;
+                arg = value;
+                return true;
             }
             else if (paramType == typeof(int))
             {
                 int iValue;
                 if (!int.TryParse(value, out iValue))
                 {
-                    iValue = -1;
+                    arg = -1;
+                    return false;
                 }
-                return iValue;
+
+                arg = iValue;
+                return true;
             }
             else
             {
