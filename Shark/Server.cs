@@ -111,7 +111,7 @@ namespace Shark
                 string name = param.Name;
 
                 string value;
-                if (query.AllKeys.Contains(name))
+                if (query.AllKeys.Contains(name, StringComparer.OrdinalIgnoreCase))
                 {
                     value = query[name];
                 }
@@ -135,22 +135,77 @@ namespace Shark
                 arg = value;
                 return true;
             }
-            else if (paramType == typeof(int))
+            else if (paramType == typeof(char))
             {
-                int iValue;
-                if (!int.TryParse(value, out iValue))
+                if (value.Length != 1)
                 {
-                    arg = -1;
+                    arg = default(char);
                     return false;
                 }
 
-                arg = iValue;
+                arg = value[0];
                 return true;
+            }
+            else if (paramType == typeof(bool))
+            {
+                return ParseIntegralType(value, out arg, Convert.ToBoolean);
+            }
+            else if (paramType == typeof(byte))
+            {
+                return ParseIntegralType(value, out arg, Convert.ToByte);
+            }
+            else if (paramType == typeof(short))
+            {
+                return ParseIntegralType(value, out arg, Convert.ToInt16);
+            }
+            else if (paramType == typeof(int))
+            {
+                return ParseIntegralType(value, out arg, Convert.ToInt32);
+            }
+            else if (paramType == typeof(long))
+            {
+                return ParseIntegralType(value, out arg, Convert.ToInt64);
+            }
+            else if (paramType == typeof(float))
+            {
+                return ParseIntegralType(value, out arg, Convert.ToSingle);
+            }
+            else if (paramType == typeof(double))
+            {
+                return ParseIntegralType(value, out arg, Convert.ToDouble);
+            }
+            else if (paramType == typeof(ushort))
+            {
+                return ParseIntegralType(value, out arg, Convert.ToUInt16);
+            }
+            else if (paramType == typeof(uint))
+            {
+                return ParseIntegralType(value, out arg, Convert.ToUInt32);
+            }
+            else if (paramType == typeof(ulong))
+            {
+                return ParseIntegralType(value, out arg, Convert.ToUInt64);
             }
             else
             {
-                // TODO: more than string and int
-                throw new ArgumentException("Can't handle anything but string and int");
+                arg = null;
+                return false;
+            }
+        }
+
+        private static bool ParseIntegralType<T>(string value, out object arg, Func<string, T> converter)
+        {
+            // TODO: this makes coding easier but the exception based Convert methods are much slower
+            // than TryParse
+            try
+            {
+                arg = converter(value);
+                return true;
+            }
+            catch (Exception)
+            {
+                arg = default(T);
+                return false;
             }
         }
 
@@ -181,11 +236,45 @@ namespace Shark
         {
             foreach (MethodInfo info in typeof(T).GetMethods())
             {
-                foreach (GetAttribute attribute in info.GetCustomAttributes<GetAttribute>())
+                IEnumerable<GetAttribute> getAttributes = info.GetCustomAttributes<GetAttribute>();
+                if (getAttributes.Count() > 0)
+                {
+                    foreach (ParameterInfo param in info.GetParameters())
+                    {
+                        if (!IsSupportedType(param.ParameterType))
+                        {
+                            throw new ArgumentException($"Unsupported type {param.ParameterType} as argument to method.");
+                        }
+                    }
+                }
+
+                foreach (GetAttribute attribute in getAttributes)
                 {
                     string route = attribute.Route;
                     mRouteMap.Add(route, info);
                 }
+            }
+        }
+
+        private bool IsSupportedType(Type parameterType)
+        {
+            switch (Type.GetTypeCode(parameterType))
+            {
+                case TypeCode.String:
+                case TypeCode.Char:
+                case TypeCode.Boolean:
+                case TypeCode.Byte:
+                case TypeCode.Int16:
+                case TypeCode.Int32:
+                case TypeCode.Int64:
+                case TypeCode.Single:
+                case TypeCode.Double:
+                case TypeCode.UInt16:
+                case TypeCode.UInt32:
+                case TypeCode.UInt64:
+                    return true;
+                default:
+                    return false;
             }
         }
     }
