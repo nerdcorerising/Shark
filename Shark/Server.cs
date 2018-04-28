@@ -12,6 +12,7 @@ namespace Shark
 {
     public delegate string RequestHandler();
     public delegate string ErrorHandler(Uri requestUri);
+    public delegate string FastPathCall(object[] args);
 
     public class Server
     {
@@ -59,6 +60,12 @@ namespace Shark
 
             while (listener.IsListening)
             {
+                if ((options?.CancellationToken.IsCancellationRequested) == true)
+                {
+                    listener.Stop();
+                    break;
+                }
+
                 HttpListenerContext context = listener.GetContext();
                 mWorkQueue.Add(context);
             }
@@ -75,14 +82,14 @@ namespace Shark
                     return;
                 }
 
-                Console.WriteLine($"Incoming request Method={context.Request.HttpMethod} LocalPath={context.Request.Url.LocalPath} RawUrl={context.Request.RawUrl}");
+                //Console.WriteLine($"Incoming request Method={context.Request.HttpMethod} LocalPath={context.Request.Url.LocalPath} RawUrl={context.Request.RawUrl}");
 
                 Uri requestUrl = context.Request.Url;
                 string route = requestUrl.LocalPath;
 
-                MethodInfo handler = FindRequestHandlerForRoute(route);
+                MethodInfo info = FindRequestHandlerForRoute(route);
                 string response;
-                if (handler == null || !CallMethodHandler(handler, context.Request, out response))
+                if (info == null || !CallMethodHandler(info, context.Request, out response))
                 {
                     response = m404Handler(requestUrl);
                 }
