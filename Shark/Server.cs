@@ -18,7 +18,11 @@ namespace Shark
     {
         private readonly int NumThreads = 8;
 //#error Need to have list of methodinfo, in case multiple handlers exist for the same route
-        private Dictionary<string, MethodInfo> mRouteMap;
+        private Dictionary<string, MethodInfo> mGetMethods;
+        private Dictionary<string, MethodInfo> mPostMethods;
+        private Dictionary<string, MethodInfo> mPutMethods;
+        private Dictionary<string, MethodInfo> mPatchMethods;
+        private Dictionary<string, MethodInfo> mDeleteMethods;
         private ErrorHandler m404Handler;
         private object mTarget;
 
@@ -26,7 +30,12 @@ namespace Shark
 
         public Server()
         {
-            mRouteMap = new Dictionary<string, MethodInfo>();
+            mGetMethods = new Dictionary<string, MethodInfo>();
+            mPostMethods = new Dictionary<string, MethodInfo>();
+            mPutMethods = new Dictionary<string, MethodInfo>();
+            mPatchMethods = new Dictionary<string, MethodInfo>();
+            mDeleteMethods = new Dictionary<string, MethodInfo>();
+
             m404Handler = Default404Handler;
             mWorkQueue = new BlockingCollection<HttpListenerContext>();
         }
@@ -82,13 +91,15 @@ namespace Shark
                     return;
                 }
 
+                // TODO: logging
                 //Console.WriteLine($"Incoming request Method={context.Request.HttpMethod} LocalPath={context.Request.Url.LocalPath} RawUrl={context.Request.RawUrl}");
 
                 Uri requestUrl = context.Request.Url;
                 string route = requestUrl.LocalPath;
+                string httpMethod = context.Request.HttpMethod;
 
-                MethodInfo info = FindRequestHandlerForRoute(route);
-                string response;
+                MethodInfo info = FindRequestHandlerForRoute(httpMethod, route);
+                Response response;
                 if (info == null || !CallMethodHandler(info, context.Request, out response))
                 {
                     response = m404Handler(requestUrl);
@@ -98,13 +109,14 @@ namespace Shark
             }
         }
 
-        private void SendResponse(HttpListenerContext context, string response)
+        private void SendResponse(HttpListenerContext context, Response response)
         {
             try
             {
+                context.Response.StatusCode = response.ResponseCode;
                 using (StreamWriter output = new StreamWriter(context.Response.OutputStream))
                 {
-                    output.Write(response);
+                    output.Write(response.Body);
                 }
             }
             catch (HttpListenerException e)
@@ -113,11 +125,11 @@ namespace Shark
             }
         }
 
-        private bool CallMethodHandler(MethodInfo handler, HttpListenerRequest request, out string response)
+        private bool CallMethodHandler(MethodInfo handler, HttpListenerRequest request, out Response response)
         {
-            if (handler.ReturnType != typeof(string))
+            if (handler.ReturnType != typeof(Response))
             {
-                throw new ArgumentException("Method to invoke doesn't return string.");
+                throw new InvalidOperationException("Method to invoke doesn't return a Response.");
             }
 
             NameValueCollection query = request.QueryString;
@@ -133,7 +145,7 @@ namespace Shark
 
             try
             {
-                response = (string)handler.Invoke(mTarget, realArgs);
+                response = (Response)handler.Invoke(mTarget, realArgs);
             }
             catch (Exception)
             {
@@ -263,14 +275,43 @@ namespace Shark
             }
         }
 
-        private MethodInfo FindRequestHandlerForRoute(string route)
+        private MethodInfo FindRequestHandlerForRoute(string httpMethod, string route)
         {
-            foreach (string candidate in mRouteMap.Keys)
+            httpMethod = httpMethod.ToLower();
+
+            if (httpMethod == "get")
             {
-                if (RouteMatches(route, candidate))
-                {
-                    return mRouteMap[candidate];
-                }
+                return FindRequestHandlerForKnownHttpMethod(mGetMethods, route);
+            }
+            else if (httpMethod == "post")
+            {
+                return FindRequestHandlerForKnownHttpMethod(mPostMethods, route);
+            }
+            else if (httpMethod == "put")
+            {
+                return FindRequestHandlerForKnownHttpMethod(mPutMethods, route);
+            }
+            else if (httpMethod == "patch")
+            {
+                return FindRequestHandlerForKnownHttpMethod(mPatchMethods, route);
+            }
+            else if (httpMethod == "delete")
+            {
+                return FindRequestHandlerForKnownHttpMethod(mDeleteMethods, route);
+            }
+            else
+            {
+                return null;
+            }
+
+        }
+
+        private MethodInfo FindRequestHandlerForKnownHttpMethod(Dictionary<string, MethodInfo> methods, string route)
+        {
+            MethodInfo target;
+            if (methods.TryGetValue(route, out target))
+            {
+                return target;
             }
 
             return null;
@@ -291,30 +332,104 @@ namespace Shark
         {
             foreach (MethodInfo info in typeof(T).GetMethods())
             {
-                IEnumerable<GetAttribute> getAttributes = info.GetCustomAttributes<GetAttribute>();
-                if (getAttributes.Count() > 0)
+                ParseGetAttributes(info);
+                ParsePostAttributes(info);
+                ParsePutAttributes(info);
+                ParsePatchAttributes(info);
+                ParseDeleteAttributes(info);
+            }
+        }
+
+        private void ParseGetAttributes(MethodInfo info)
+        {
+            IEnumerable<GetAttribute> getAttributes = info.GetCustomAttributes<GetAttribute>();
+            if (getAttributes.Count() > 0)
+            {
+                ValidateParameters(info);
+            }
+
+            foreach (GetAttribute attribute in getAttributes)
+            {
+                string route = attribute.Path;
+                mGetMethods.Add(route, info);
+            }
+        }
+
+        private void ParsePostAttributes(MethodInfo info)
+        {
+            IEnumerable<PostAttribute> getAttributes = info.GetCustomAttributes<PostAttribute>();
+            if (getAttributes.Count() > 0)
+            {
+                ValidateParameters(info);
+            }
+
+            foreach (PostAttribute attribute in getAttributes)
+            {
+                string route = attribute.Path;
+                mPostMethods.Add(route, info);
+            }
+        }
+
+        private void ParsePutAttributes(MethodInfo info)
+        {
+            IEnumerable<PutAttribute> getAttributes = info.GetCustomAttributes<PutAttribute>();
+            if (getAttributes.Count() > 0)
+            {
+                ValidateParameters(info);
+            }
+
+            foreach (PutAttribute attribute in getAttributes)
+            {
+                string route = attribute.Path;
+                mPutMethods.Add(route, info);
+            }
+        }
+
+        private void ParsePatchAttributes(MethodInfo info)
+        {
+            IEnumerable<PatchAttribute> getAttributes = info.GetCustomAttributes<PatchAttribute>();
+            if (getAttributes.Count() > 0)
+            {
+                ValidateParameters(info);
+            }
+
+            foreach (PatchAttribute attribute in getAttributes)
+            {
+                string route = attribute.Path;
+                mPatchMethods.Add(route, info);
+            }
+        }
+
+        private void ParseDeleteAttributes(MethodInfo info)
+        {
+            IEnumerable<DeleteAttribute> getAttributes = info.GetCustomAttributes<DeleteAttribute>();
+            if (getAttributes.Count() > 0)
+            {
+                ValidateParameters(info);
+            }
+
+            foreach (DeleteAttribute attribute in getAttributes)
+            {
+                string route = attribute.Path;
+                mDeleteMethods.Add(route, info);
+            }
+        }
+
+        private void ValidateParameters(MethodInfo info)
+        {
+            ParameterInfo[] parameters = info.GetParameters();
+            foreach (ParameterInfo param in parameters)
+            {
+                if (param.ParameterType == typeof(NameValueCollection))
                 {
-                    ParameterInfo[] parameters = info.GetParameters();
-                    foreach (ParameterInfo param in parameters)
+                    if (parameters.Length != 1)
                     {
-                        if (param.ParameterType == typeof(NameValueCollection))
-                        {
-                            if (parameters.Length != 1)
-                            {
-                                throw new ArgumentException($"NameValueCollection arguments must be the only argument for method {info.Name}");
-                            }
-                        }
-                        else if (!IsSupportedType(param.ParameterType))
-                        {
-                            throw new ArgumentException($"Unsupported type {param.ParameterType} as argument to method for method {info.Name}");
-                        }
+                        throw new ArgumentException($"NameValueCollection arguments must be the only argument for method {info.Name}");
                     }
                 }
-
-                foreach (GetAttribute attribute in getAttributes)
+                else if (!IsSupportedType(param.ParameterType))
                 {
-                    string route = attribute.Route;
-                    mRouteMap.Add(route, info);
+                    throw new ArgumentException($"Unsupported type {param.ParameterType} as argument to method for method {info.Name}");
                 }
             }
         }

@@ -2,9 +2,9 @@
 namespace Shark
 {
     [AttributeUsage(AttributeTargets.Method, AllowMultiple = true, Inherited = true)]
-    public class GetAttribute : Attribute
+    public class PutAttribute : Attribute
     {
-        public GetAttribute(string path)
+        public PutAttribute(string path)
         {
             Path = path;
         }
