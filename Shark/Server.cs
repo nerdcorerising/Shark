@@ -5,6 +5,8 @@ using System.Linq;
 using System.IO;
 using System.Net;
 using System.Reflection;
+using System.Threading;
+using System.Collections.Concurrent;
 
 namespace Shark
 {
@@ -13,15 +15,19 @@ namespace Shark
 
     public class Server
     {
+        private readonly int NumThreads = 8;
+//#error Need to have list of methodinfo, in case multiple handlers exist for the same route
         private Dictionary<string, MethodInfo> mRouteMap;
         private ErrorHandler m404Handler;
         private object mTarget;
 
+        private BlockingCollection<HttpListenerContext> mWorkQueue;
+
         public Server()
         {
-//#error Do Tests!
             mRouteMap = new Dictionary<string, MethodInfo>();
             m404Handler = Default404Handler;
+            mWorkQueue = new BlockingCollection<HttpListenerContext>();
         }
 
         public void RunServer<T>()
@@ -35,6 +41,14 @@ namespace Shark
 
             mTarget = Activator.CreateInstance<T>();
 
+            CancellationTokenSource tokenSource = new CancellationTokenSource();
+
+            for (int i = 0; i < NumThreads; ++i)
+            {
+                Thread temp = new Thread(WorkerThread);
+                temp.Start(tokenSource.Token);
+            }
+
             string listenUrl = options?.Url ?? "http://localhost:3500/";
             HttpListener listener = new HttpListener();
             listener.Prefixes.Add(listenUrl);
@@ -46,6 +60,20 @@ namespace Shark
             while (listener.IsListening)
             {
                 HttpListenerContext context = listener.GetContext();
+                mWorkQueue.Add(context);
+            }
+        }
+
+        private void WorkerThread(object tokenObj)
+        {
+            CancellationToken token = (CancellationToken)tokenObj;
+            while (true)
+            {
+                HttpListenerContext context = mWorkQueue.Take(token);
+                if (token.IsCancellationRequested)
+                {
+                    return;
+                }
 
                 Console.WriteLine($"Incoming request Method={context.Request.HttpMethod} LocalPath={context.Request.Url.LocalPath} RawUrl={context.Request.RawUrl}");
 
@@ -59,10 +87,22 @@ namespace Shark
                     response = m404Handler(requestUrl);
                 }
 
+                SendResponse(context, response);
+            }
+        }
+
+        private void SendResponse(HttpListenerContext context, string response)
+        {
+            try
+            {
                 using (StreamWriter output = new StreamWriter(context.Response.OutputStream))
                 {
                     output.Write(response);
                 }
+            }
+            catch (HttpListenerException e)
+            {
+                Console.WriteLine($"Error writing to response stream: {e.Message}");
             }
         }
 
