@@ -75,6 +75,11 @@ namespace Shark
         readonly List<PathPart> mParts;
         private readonly HttpMethod mMethods;
 
+        public SharkPath(string route) : this(route, HttpMethod.GET)
+        {
+            
+        }
+
         public SharkPath(string route, HttpMethod methods)
         {
             mParts = new List<PathPart>();
@@ -199,7 +204,11 @@ namespace Shark
                                 return false;
                             }
 
-                            // TODO: what about duplicately named variables
+                            if (variables?.ContainsKey(pp.Name) == true)
+                            {
+                                throw new ArgumentException($"Duplicately named variable {pp.Name} in route {route}");
+                            }
+
                             variables?.Add(pp.Name, arg);
                         }
                         break;
@@ -307,6 +316,12 @@ namespace Shark
                     if (pos >= route.Length || route[pos] == '{')
                     {
                         inVariable = true;
+
+                        if (pos < route.Length && route[pos] == '{' && pos > 0 && route[pos - 1] != '/')
+                        {
+                            throw new ArgumentException($"Path {route} has a variable which is not enclosed in between two '/'.");
+                        }
+
                         string path = builder.ToString();
                         builder.Clear();
                         if (path.Length > 0)
@@ -337,6 +352,10 @@ namespace Shark
                     else if (route[pos] == '}')
                     {
                         inVariable = false;
+                        if (pos < (route.Length - 1) && route[pos + 1] != '/')
+                        {
+                            throw new ArgumentException($"Path {route} has a variable which is not enclosed in between two '/'.");
+                        }
                         string variableDecl = builder.ToString();
                         builder.Clear();
                         PathPart temp = ParseVariable(variableDecl);

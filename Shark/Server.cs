@@ -130,11 +130,6 @@ namespace Shark
         {
             response = String.Empty;
 
-            if (handler.ReturnType != typeof(Response))
-            {
-                throw new InvalidOperationException("Method to invoke doesn't return a Response.");
-            }
-
             // TODO: something with the query... should make it available to the user somehow
             NameValueCollection query = request.QueryString;
 
@@ -228,6 +223,11 @@ namespace Shark
                 if (getAttributes.Count() > 0)
                 {
                     ValidateParameters(info);
+
+                    if (info.ReturnType != typeof(Response))
+                    {
+                        throw new ArgumentException($"Method {info.Name} doesn't return a Response.");
+                    }
                 }
 
                 foreach (PathAttribute attribute in getAttributes)
