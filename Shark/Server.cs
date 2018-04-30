@@ -19,7 +19,6 @@ namespace Shark
         private Dictionary<SharkPath, MethodInfo> mMethods;
         private ErrorHandler m404Handler;
         private CancellationTokenSource mCancellationSource;
-        private object mTarget;
         private HttpListener mListener;
 
         private BlockingCollection<HttpListenerContext> mWorkQueue;
@@ -31,8 +30,6 @@ namespace Shark
             mWorkQueue = new BlockingCollection<HttpListenerContext>();
 
             BuildRouteMap();
-
-            mTarget = Activator.CreateInstance<T>();
 
             mCancellationSource = new CancellationTokenSource();
             int numThreads = options?.WorkerThreadCount ?? DefaultThreads;
@@ -156,7 +153,14 @@ namespace Shark
 
             try
             {
-                response = (Response)handler.Invoke(mTarget, realArgs);
+                T target = Activator.CreateInstance<T>();
+                SharkServerBase ssb = target as SharkServerBase;
+                if (ssb != null)
+                {
+                    ssb.Request = request;
+                }
+
+                response = (Response)handler.Invoke(target, realArgs);
             }
             catch (Exception)
             {
@@ -166,7 +170,10 @@ namespace Shark
             return true;
         }
 
-        private bool FindRequestHandlerForRoute(string httpMethod, string route, out MethodInfo info, out Dictionary<string, object> values)
+        private bool FindRequestHandlerForRoute(string httpMethod,
+                                                string route,
+                                                out MethodInfo info,
+                                                out Dictionary<string, object> values)
         {
             info = null;
             values = null;

@@ -5,12 +5,21 @@ using Shark;
 
 namespace SharkConsole
 {
-    public class TestServer
+    public class TestServer : SharkServerBase
     {
         [Path("/hello")]
         public Response Hello()
         {
-            return "Hello from the simple test case!";
+            StringBuilder builder = new StringBuilder();
+            builder.AppendLine("Hello from the simple test case!");
+
+            builder.AppendLine("Arguments:");
+            foreach (string name in Request.QueryString.Keys)
+            {
+                builder.AppendLine($"    {name}:{Request.QueryString[name]}");
+            }
+
+            return builder.ToString();
         }
 
         [Path("/argtest/{count:int}/{name}")]
@@ -18,11 +27,5 @@ namespace SharkConsole
         {
             return $"ArgumentTest: count:{count} name:{name}";
         }
-
-        //[Path("/pathtest/{p:path}")]
-        //public Response PathTest(string p)
-        //{
-        //    return $"PathTest: p:{p}";
-        //}
     }
 }
