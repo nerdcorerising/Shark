@@ -3,7 +3,7 @@ using System.Collections.Specialized;
 using System.Text;
 using Shark;
 
-namespace SharkConsole
+namespace SharkTests.Servers
 {
     public class TestServer
     {
@@ -13,16 +13,22 @@ namespace SharkConsole
             return "Hello from the simple test case!";
         }
 
-        [Path("/argtest/{count:int}/{name}")]
+        [Path("/argtest")]
         public Response ArgumentTest(int count, string name)
         {
             return $"ArgumentTest: count:{count} name:{name}";
         }
 
-        [Path("/pathtest/{p:path}")]
-        public Response PathTest(string p)
+        [Path("/namevalue")]
+        public Response NameValueTest(NameValueCollection query)
         {
-            return $"PathTest: p:{p}";
+            StringBuilder builder = new StringBuilder();
+            foreach (string key in query.AllKeys)
+            {
+                builder.AppendLine($"{key}:{query[key]}");
+            }
+
+            return builder.ToString();
         }
     }
 }

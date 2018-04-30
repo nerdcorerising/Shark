@@ -7,8 +7,8 @@ namespace SharkConsole
     {
         static void Main(string[] args)
         {
-            Server server = new Server();
-            server.RunServer<TestServer>();
+            Server<TestServer> server = new Server<TestServer>();
+            server.Run();
         }
     }
 }

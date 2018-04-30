@@ -15,4 +15,7 @@
   <ItemGroup>
     <ProjectReference Include="..\Shark\Shark.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <Folder Include="Servers\" />
+  </ItemGroup>
 </Project>

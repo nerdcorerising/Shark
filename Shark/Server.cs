@@ -13,87 +13,79 @@ namespace Shark
     public delegate Response ErrorHandler(Uri requestUri);
     public delegate string FastPathCall(object[] args);
 
-    public class Server
+    public class Server<T> : IDisposable
     {
         private readonly int DefaultThreads = 8;
-        private Dictionary<string, MethodInfo> mGetMethods;
-        private Dictionary<string, MethodInfo> mPostMethods;
-        private Dictionary<string, MethodInfo> mPutMethods;
-        private Dictionary<string, MethodInfo> mPatchMethods;
-        private Dictionary<string, MethodInfo> mDeleteMethods;
+        private Dictionary<SharkPath, MethodInfo> mMethods;
         private ErrorHandler m404Handler;
+        private CancellationTokenSource mCancellationSource;
         private object mTarget;
+        private HttpListener mListener;
 
         private BlockingCollection<HttpListenerContext> mWorkQueue;
 
-        public Server()
+        public Server(SharkOptions options = null)
         {
-            mGetMethods = new Dictionary<string, MethodInfo>();
-            mPostMethods = new Dictionary<string, MethodInfo>();
-            mPutMethods = new Dictionary<string, MethodInfo>();
-            mPatchMethods = new Dictionary<string, MethodInfo>();
-            mDeleteMethods = new Dictionary<string, MethodInfo>();
+            mMethods = new Dictionary<SharkPath, MethodInfo>();
 
             mWorkQueue = new BlockingCollection<HttpListenerContext>();
-        }
 
-        public void RunServer<T>()
-        {
-            RunServer<T>(null as SharkOptions);
-        }
-
-        public void RunServer<T>(SharkOptions options)
-        {
-            BuildRouteMap<T>();
+            BuildRouteMap();
 
             mTarget = Activator.CreateInstance<T>();
 
+            mCancellationSource = new CancellationTokenSource();
             int numThreads = options?.WorkerThreadCount ?? DefaultThreads;
             for (int i = 0; i < DefaultThreads; ++i)
             {
                 Thread temp = new Thread(WorkerThread);
-                temp.Start(options.CancellationToken);
+                temp.Start(mCancellationSource.Token);
             }
 
             string listenUrl = options?.Url ?? "http://localhost:3500/";
-            HttpListener listener = new HttpListener();
-            listener.Prefixes.Add(listenUrl);
+            mListener = new HttpListener();
+            mListener.Prefixes.Add(listenUrl);
 
             m404Handler = options?.Handler ?? Default404Handler;
+        }
 
-            Console.WriteLine($"Starting listening at {listenUrl}");
+        public void Run(CancellationToken? token = null)
+        {
+            Console.WriteLine($"Starting listening at {mListener.Prefixes.FirstOrDefault()}");
 
-            listener.Start();
+            mListener.Start();
 
-            while (listener.IsListening)
+            while (mListener.IsListening)
             {
-                if ((options?.CancellationToken?.IsCancellationRequested) == true)
+                if ((token?.IsCancellationRequested) == true)
                 {
-                    listener.Stop();
+                    mListener.Stop();
                     break;
                 }
 
-                HttpListenerContext context = listener.GetContext();
+                HttpListenerContext context = mListener.GetContext();
                 mWorkQueue.Add(context);
+            }
+        }
+
+        public void Dispose()
+        {
+            mCancellationSource.Cancel();
+            mCancellationSource.Dispose();
+            if (mListener.IsListening)
+            {
+                mListener.Close();
             }
         }
 
         private void WorkerThread(object tokenObj)
         {
-            CancellationToken? token = (CancellationToken?)tokenObj;
+            CancellationToken token = (CancellationToken)tokenObj;
             while (true)
             {
-                HttpListenerContext context;
-                if (token.HasValue)
-                {
-                    context = mWorkQueue.Take(token.Value);
-                }
-                else
-                {
-                    context = mWorkQueue.Take();
-                }
+                HttpListenerContext context = mWorkQueue.Take(token);
 
-                if (token?.IsCancellationRequested == true)
+                if (token.IsCancellationRequested == true)
                 {
                     return;
                 }
@@ -105,9 +97,11 @@ namespace Shark
                 string route = requestUrl.LocalPath;
                 string httpMethod = context.Request.HttpMethod;
 
-                MethodInfo info = FindRequestHandlerForRoute(httpMethod, route);
+                MethodInfo info;
+                Dictionary<string, object> values;
+                bool success = FindRequestHandlerForRoute(httpMethod, route, out info, out values);
                 Response response;
-                if (info == null || !CallMethodHandler(info, context.Request, out response))
+                if (!success || !CallMethodHandler(info, values, context.Request, out response))
                 {
                     response = m404Handler(requestUrl);
                 }
@@ -132,22 +126,37 @@ namespace Shark
             }
         }
 
-        private bool CallMethodHandler(MethodInfo handler, HttpListenerRequest request, out Response response)
+        private bool CallMethodHandler(MethodInfo handler, Dictionary<string, object> values, HttpListenerRequest request, out Response response)
         {
+            response = String.Empty;
+
             if (handler.ReturnType != typeof(Response))
             {
                 throw new InvalidOperationException("Method to invoke doesn't return a Response.");
             }
 
+            // TODO: something with the query... should make it available to the user somehow
             NameValueCollection query = request.QueryString;
 
             ParameterInfo[] parameters = handler.GetParameters();
             int paramCount = parameters.Length;
             object[] realArgs = new object[paramCount];
-            if (!MakeArgs(query, parameters, paramCount, realArgs))
+
+            if (parameters.Length != values.Keys.Count)
             {
-                response = String.Empty;
                 return false;
+            }
+
+            for (int i = 0; i < parameters.Length; ++i)
+            {
+                string paramName = parameters[i].Name;
+                object arg;
+                if (!values.TryGetValue(paramName, out arg))
+                {
+                    return false;
+                }
+
+                realArgs[i] = arg;
             }
 
             try
@@ -156,7 +165,6 @@ namespace Shark
             }
             catch (Exception)
             {
-                response = String.Empty;
                 return false;
             }
 
@@ -266,7 +274,7 @@ namespace Shark
             }
         }
 
-        private static bool ParseIntegralType<T>(string value, out object arg, Func<string, T> converter)
+        private bool ParseIntegralType<I>(string value, out object arg, Func<string, I> converter)
         {
             // TODO: this makes coding easier but the exception based Convert methods are much slower
             // than TryParse
@@ -277,57 +285,53 @@ namespace Shark
             }
             catch (Exception)
             {
-                arg = default(T);
+                arg = default(I);
                 return false;
             }
         }
 
-        private MethodInfo FindRequestHandlerForRoute(string httpMethod, string route)
+        private bool FindRequestHandlerForRoute(string httpMethod, string route, out MethodInfo info, out Dictionary<string, object> values)
         {
-            httpMethod = httpMethod.ToLower();
+            info = null;
+            values = null;
 
+            httpMethod = httpMethod.ToLower();
+            HttpMethod method;
             if (httpMethod == "get")
             {
-                return FindRequestHandlerForKnownHttpMethod(mGetMethods, route);
+                method = HttpMethod.GET;
             }
             else if (httpMethod == "post")
             {
-                return FindRequestHandlerForKnownHttpMethod(mPostMethods, route);
+                method = HttpMethod.POST;
             }
             else if (httpMethod == "put")
             {
-                return FindRequestHandlerForKnownHttpMethod(mPutMethods, route);
+                method = HttpMethod.PUT;
             }
             else if (httpMethod == "patch")
             {
-                return FindRequestHandlerForKnownHttpMethod(mPatchMethods, route);
+                method = HttpMethod.PATCH;
             }
             else if (httpMethod == "delete")
             {
-                return FindRequestHandlerForKnownHttpMethod(mDeleteMethods, route);
+                method = HttpMethod.DELETE;
             }
             else
             {
-                return null;
+                throw new ArgumentException($"Invalid method {httpMethod} in FindRequestHandlerForRoute");
             }
 
-        }
-
-        private MethodInfo FindRequestHandlerForKnownHttpMethod(Dictionary<string, MethodInfo> methods, string route)
-        {
-            MethodInfo target;
-            if (methods.TryGetValue(route, out target))
+            foreach (SharkPath path in mMethods.Keys)
             {
-                return target;
+                if (path.EnabledFor(method) && (values = path.ParseRoute(route)) != null)
+                {
+                    info = mMethods[path];
+                    return true;
+                }
             }
 
-            return null;
-        }
-
-        private bool RouteMatches(string route, string candidate)
-        {
-            // TODO: wildcards
-            return route.Equals(candidate, StringComparison.OrdinalIgnoreCase);
+            return false;
         }
 
         private Response Default404Handler(Uri requestUrl)
@@ -335,90 +339,51 @@ namespace Shark
             return $"<b>{requestUrl.PathAndQuery}: 404 not found</b>";
         }
 
-        private void BuildRouteMap<T>()
+        private void BuildRouteMap()
         {
             foreach (MethodInfo info in typeof(T).GetMethods())
             {
-                ParseGetAttributes(info);
-                ParsePostAttributes(info);
-                ParsePutAttributes(info);
-                ParsePatchAttributes(info);
-                ParseDeleteAttributes(info);
-            }
-        }
+                IEnumerable<PathAttribute> getAttributes = info.GetCustomAttributes<PathAttribute>();
+                if (getAttributes.Count() > 0)
+                {
+                    ValidateParameters(info);
+                }
 
-        private void ParseGetAttributes(MethodInfo info)
-        {
-            IEnumerable<GetAttribute> getAttributes = info.GetCustomAttributes<GetAttribute>();
-            if (getAttributes.Count() > 0)
-            {
-                ValidateParameters(info);
-            }
+                foreach (PathAttribute attribute in getAttributes)
+                {
+                    string route = attribute.Path;
+                    HttpMethod httpMethods = 0;
+                    foreach (string method in attribute.Methods)
+                    {
+                        if (method.Equals("get", StringComparison.OrdinalIgnoreCase))
+                        {
+                            httpMethods |= HttpMethod.GET;
+                        }
+                        else if (method.Equals("post", StringComparison.OrdinalIgnoreCase))
+						{
+							httpMethods |= HttpMethod.POST;
+						}
+                        else if (method.Equals("put", StringComparison.OrdinalIgnoreCase))
+                        {
+                            httpMethods |= HttpMethod.PUT;
+                        }
+                        else if (method.Equals("patch", StringComparison.OrdinalIgnoreCase))
+                        {
+                            httpMethods |= HttpMethod.PATCH;
+                        }
+                        else if (method.Equals("delete", StringComparison.OrdinalIgnoreCase))
+                        {
+                            httpMethods |= HttpMethod.DELETE;
+                        }
+                        else
+                        {
+                            throw new ArgumentException($"Invalid http method {method} in path attribute for method {info.Name}.");
+                        }
+                    }
 
-            foreach (GetAttribute attribute in getAttributes)
-            {
-                string route = attribute.Path;
-                mGetMethods.Add(route, info);
-            }
-        }
-
-        private void ParsePostAttributes(MethodInfo info)
-        {
-            IEnumerable<PostAttribute> getAttributes = info.GetCustomAttributes<PostAttribute>();
-            if (getAttributes.Count() > 0)
-            {
-                ValidateParameters(info);
-            }
-
-            foreach (PostAttribute attribute in getAttributes)
-            {
-                string route = attribute.Path;
-                mPostMethods.Add(route, info);
-            }
-        }
-
-        private void ParsePutAttributes(MethodInfo info)
-        {
-            IEnumerable<PutAttribute> getAttributes = info.GetCustomAttributes<PutAttribute>();
-            if (getAttributes.Count() > 0)
-            {
-                ValidateParameters(info);
-            }
-
-            foreach (PutAttribute attribute in getAttributes)
-            {
-                string route = attribute.Path;
-                mPutMethods.Add(route, info);
-            }
-        }
-
-        private void ParsePatchAttributes(MethodInfo info)
-        {
-            IEnumerable<PatchAttribute> getAttributes = info.GetCustomAttributes<PatchAttribute>();
-            if (getAttributes.Count() > 0)
-            {
-                ValidateParameters(info);
-            }
-
-            foreach (PatchAttribute attribute in getAttributes)
-            {
-                string route = attribute.Path;
-                mPatchMethods.Add(route, info);
-            }
-        }
-
-        private void ParseDeleteAttributes(MethodInfo info)
-        {
-            IEnumerable<DeleteAttribute> getAttributes = info.GetCustomAttributes<DeleteAttribute>();
-            if (getAttributes.Count() > 0)
-            {
-                ValidateParameters(info);
-            }
-
-            foreach (DeleteAttribute attribute in getAttributes)
-            {
-                string route = attribute.Path;
-                mDeleteMethods.Add(route, info);
+                    SharkPath path = new SharkPath(route, httpMethods);
+                    mMethods.Add(path, info);
+                }
             }
         }
 
