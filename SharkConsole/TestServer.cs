@@ -19,10 +19,10 @@ namespace SharkConsole
             return $"ArgumentTest: count:{count} name:{name}";
         }
 
-        [Path("/pathtest/{p:path}")]
-        public Response PathTest(string p)
-        {
-            return $"PathTest: p:{p}";
-        }
+        //[Path("/pathtest/{p:path}")]
+        //public Response PathTest(string p)
+        //{
+        //    return $"PathTest: p:{p}";
+        //}
     }
 }

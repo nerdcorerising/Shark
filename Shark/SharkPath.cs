@@ -104,6 +104,21 @@ namespace Shark
             return null;
         }
 
+        public Dictionary<string, Type> GetVariableTypes()
+        {
+            Dictionary<string, Type> variables = new Dictionary<string, Type>();
+
+            foreach (PathPart part in mParts)
+            {
+                if (part.Kind == PathPartKind.UserItem)
+                {
+                    variables.Add(part.Name, part.Type);
+                }
+            }
+
+            return variables;
+        }
+
         public override bool Equals(object obj)
         {
             if (obj == null || obj.GetType() != this.GetType())
@@ -184,6 +199,7 @@ namespace Shark
                                 return false;
                             }
 
+                            // TODO: what about duplicately named variables
                             variables?.Add(pp.Name, arg);
                         }
                         break;

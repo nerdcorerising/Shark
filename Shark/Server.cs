@@ -263,6 +263,28 @@ namespace Shark
                     }
 
                     SharkPath path = new SharkPath(route, httpMethods);
+                    Dictionary<string, Type> variables = path.GetVariableTypes();
+                    ParameterInfo[] paramInfos = info.GetParameters();
+
+                    if (variables.Count != paramInfos.Length)
+                    {
+                        throw new ArgumentException($"Method {info.Name} has a mismatched number of parameters in the method signature and in the path.");
+                    }
+
+                    foreach (ParameterInfo param in paramInfos)
+                    {
+                        Type varType;
+                        if (!variables.TryGetValue(param.Name, out varType))
+                        {
+                            throw new ArgumentException($"Parameter {param.Name} to method {info.Name} does not exist in the path.");
+                        }
+
+                        if (varType != param.ParameterType)
+                        {
+                            throw new ArgumentException($"Parameter {param.Name} of method {info.Name} has mismatched types with the path.");
+                        }
+                    }
+
                     mMethods.Add(path, info);
                 }
             }
@@ -273,14 +295,7 @@ namespace Shark
             ParameterInfo[] parameters = info.GetParameters();
             foreach (ParameterInfo param in parameters)
             {
-                if (param.ParameterType == typeof(NameValueCollection))
-                {
-                    if (parameters.Length != 1)
-                    {
-                        throw new ArgumentException($"NameValueCollection arguments must be the only argument for method {info.Name}");
-                    }
-                }
-                else if (!IsSupportedType(param.ParameterType))
+                if (!IsSupportedType(param.ParameterType))
                 {
                     throw new ArgumentException($"Unsupported type {param.ParameterType} as argument to method for method {info.Name}");
                 }
