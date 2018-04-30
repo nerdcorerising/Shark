@@ -33,7 +33,7 @@ namespace Shark
 
             mCancellationSource = new CancellationTokenSource();
             int numThreads = options?.WorkerThreadCount ?? DefaultThreads;
-            for (int i = 0; i < DefaultThreads; ++i)
+            for (int i = 0; i < numThreads; ++i)
             {
                 Thread temp = new Thread(WorkerThread);
                 temp.Start(mCancellationSource.Token);
